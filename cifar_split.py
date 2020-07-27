@@ -7,7 +7,7 @@ from PIL import Image
 import torch.utils.data as data
 
 class CIFAR_split(data.Dataset):
-    def __init__(self, dir_path, num_exclude, train):
+    def __init__(self, dir_path, num_exclude, train, get_unknown=False):
         self.data = list()
         self.targets = list()
         filelist = self.get_file_list(dir_path, train)
@@ -28,7 +28,10 @@ class CIFAR_split(data.Dataset):
         self.data = self.data.transpose((0, 2, 3, 1))  # convert to HWC
 
         self.targets = np.array(self.targets)
-        include_idx = self.targets < num_exclude
+        if get_unknown is False:
+            include_idx = self.targets < num_exclude
+        else:
+            include_idx = self.targets >= num_exclude
 
         self.targets = self.targets[include_idx]
         self.data = self.data[include_idx]
@@ -74,7 +77,7 @@ class CIFAR_split(data.Dataset):
         return len(self.data)
 
 if __name__ == '__main__':
-    data = CIFAR_split(dir_path='cifar-10-batches-py', num_exclude=50, train=True)
+    data = CIFAR_split(dir_path='cifar-100-python', num_exclude=50, train=True, get_unknown=True)
 
     tmp=0
 

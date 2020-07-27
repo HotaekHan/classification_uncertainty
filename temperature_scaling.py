@@ -97,6 +97,16 @@ class ModelWithTemperature(nn.Module):
 if __name__ == '__main__':
     config = utils.get_config(opt.config)
 
+    '''make output folder'''
+    if not os.path.exists(config['exp']['path']):
+        os.makedirs(config['exp']['path'], exist_ok=False)
+
+    if not os.path.exists(os.path.join(config['exp']['path'], 'config.yaml')):
+        shutil.copy(opt.config, os.path.join(config['exp']['path'], 'config.yaml'))
+    else:
+        os.remove(os.path.join(config['exp']['path'], 'config.yaml'))
+        shutil.copy(opt.config, os.path.join(config['exp']['path'], 'config.yaml'))
+
     '''cuda'''
     if torch.cuda.is_available() and not config['gpu']['used']:
         print("WARNING: You have a CUDA device, so you should probably run with using cuda")
@@ -148,6 +158,19 @@ if __name__ == '__main__':
         num_train = num_train - num_valid
 
         train_dataset, valid_dataset = torch.utils.data.random_split(train_data, [num_train, num_valid])
+    elif config['data']['name'] == 'cifar10':
+        num_classes = 10 - config['params']['num_exclude_class']
+        # train_data = datasets.CIFAR10(os.getcwd(), train=True, download=True, transform=None)
+        if config['params']['num_exclude_class'] > 8:
+            raise ValueError('cifar10 has 10 classes. the number of exclude classes is over than num. of classes')
+
+        train_data = CIFAR_split(dir_path='cifar-10-batches-py', num_exclude=config['params']['num_exclude_class'],
+                                 train=True)
+        num_train = len(train_data)
+        num_valid = int(num_train * 0.2)
+        num_train = num_train - num_valid
+
+        train_dataset, valid_dataset = torch.utils.data.random_split(train_data, [num_train, num_valid])
     else:
         raise NotImplementedError('Unsupported Dataset: ' + str(config['data']['name']))
 
@@ -175,5 +198,5 @@ if __name__ == '__main__':
     temp_model.set_temperature(valid_loader, device)
     model_filename = os.path.join(config['exp']['path'], 'model_with_temperature.pth')
     torch.save(temp_model.state_dict(), model_filename)
-    print('Temperature scaled model sved to %s' % model_filename)
+    print('Temperature scaled model save to %s' % model_filename)
     print('Done!')

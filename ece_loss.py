@@ -30,8 +30,11 @@ class ECELoss(nn.Module):
         self.bin_lowers = bin_boundaries[:-1]
         self.bin_uppers = bin_boundaries[1:]
 
-    def forward(self, logits, labels):
-        softmaxes = F.softmax(logits, dim=1)
+    def forward(self, logits, labels, is_logits=True):
+        if is_logits is True:
+            softmaxes = F.softmax(logits, dim=1)
+        else:
+            softmaxes = logits
         confidences, predictions = torch.max(softmaxes, 1)
         accuracies = predictions.eq(labels)
 

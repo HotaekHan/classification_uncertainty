@@ -124,11 +124,12 @@ def view_inputs(x):
         cv2.waitKey(0)
 
 
-def draw_histogram(datalist):
+def draw_histogram(datalist, dir_path=None):
     if not isinstance(datalist, list):
         raise TypeError()
 
     data = np.array(datalist)
+    np.savetxt(fname=os.path.join(dir_path, 'unknown-confidences.txt'), X=data)
     data_mean = data.mean()
 
     ys, xs, patches = plt.hist(data, bins=10, range=(0.0, 1.0), density=False,
@@ -136,7 +137,11 @@ def draw_histogram(datalist):
 
     plt.xlabel('Probability')
     plt.ylabel('Num. of samples')
-    plt.title(data_mean)
+    title_str = f'mean of prob: {data_mean:.4f}'
+    plt.title(title_str)
+
+    if dir_path is not None:
+        plt.savefig(os.path.join(dir_path, 'unknown_classes.png'))
 
     plt.show()
 
@@ -173,7 +178,7 @@ def do_test(is_scaling=False):
     ''' inference '''
     net.eval()
 
-    uncertainties = list()
+    certainties = list()
     with torch.set_grad_enabled(False):
         # with autograd.detect_anomaly():
         for batch_idx, (inputs, targets) in enumerate(tqdm(data_loader)):
@@ -183,19 +188,20 @@ def do_test(is_scaling=False):
             logits = net(inputs)
             probs = logits.softmax(dim=1)
 
-            max_probs, _ = probs.detach().cpu().max(dim=1)
+            max_probs, max_ind = probs.detach().cpu().max(dim=1)
             # max_probs = torch.ones([1], dtype=torch.float32) - max_probs
-            uncertainties.extend(max_probs.tolist())
+            certainties.extend(max_probs.tolist())
 
-    draw_histogram(uncertainties)
+    draw_histogram(certainties, config['exp']['path'])
 
 
-def apply_dropout(m):
+def apply_mc_dropout(m):
     if type(m) == nn.Dropout:
         m.train()
 
+
 def do_test_beyesian():
-    num_infer = 100
+    num_infer = config['params']['num_infer']
 
     ''' Model'''
     net = net_factory.load_model(config=config, num_classes=num_classes, dropout=config['params']['dropout'])
@@ -218,10 +224,10 @@ def do_test_beyesian():
 
     ''' inference '''
     net.eval()
-    net.apply(apply_dropout)
+    net.apply(apply_mc_dropout)
     print(net)
 
-    uncertainties = list()
+    certainties = list()
     with torch.set_grad_enabled(False):
         # with autograd.detect_anomaly():
         for batch_idx, (inputs, targets) in enumerate(tqdm(data_loader)):
@@ -240,15 +246,50 @@ def do_test_beyesian():
             # var = var[torch.arange(0, inputs.shape[0]), max_ind]
             var = var.mean(dim=1)
             # max_probs = torch.ones([1], dtype=torch.float32) - max_probs
-            uncertainties.extend(max_probs.tolist())
+            certainties.extend(max_probs.tolist())
 
-    draw_histogram(uncertainties)
-
+    draw_histogram(certainties, config['exp']['path'])
 
 
 def do_test_ensemble():
     num_ensemble = config['params']['num_ensembles']
-    pass
+    nets = list()
+
+    for iter_idx in range(num_ensemble):
+        net = net_factory.load_model(config=config, num_classes=num_classes)
+        net = net.to(device)
+
+        weight_file = 'best_' + str(iter_idx) + '.pth'
+        ckpt = torch.load(os.path.join(config['exp']['path'], weight_file), map_location=device)
+        weights = utils._load_weights(ckpt['net'])
+        missing_keys = net.load_state_dict(weights, strict=True)
+        print(missing_keys)
+
+        net.eval()
+        nets.append(net)
+
+    certainties = list()
+    with torch.set_grad_enabled(False):
+        # with autograd.detect_anomaly():
+        for batch_idx, (inputs, targets) in enumerate(tqdm(data_loader)):
+            inputs = inputs.to(device)
+
+            all_probs = list()
+            for net in nets:
+                # view_inputs(inputs)
+                logits = net(inputs)
+                probs = logits.softmax(dim=1)
+                all_probs.append(probs.detach().cpu())
+            all_probs = torch.stack(all_probs)
+            all_probs = all_probs.contiguous().permute(1, 2, 0)
+            var, mean = torch.var_mean(all_probs, dim=2, unbiased=True)
+            max_probs, max_ind = mean.max(dim=1)
+            # var = var[torch.arange(0, inputs.shape[0]), max_ind]
+            var = var.mean(dim=1)
+            # max_probs = torch.ones([1], dtype=torch.float32) - max_probs
+            certainties.extend(max_probs.tolist())
+
+    draw_histogram(certainties, config['exp']['path'])
 
 
 if __name__ == '__main__':

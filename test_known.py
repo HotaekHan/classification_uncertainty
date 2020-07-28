@@ -1,0 +1,376 @@
+# python
+import os
+import argparse
+import random
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from tqdm import tqdm
+
+# pytorch
+import torch
+import torch.nn as nn
+import torchvision.transforms as transforms
+from torchvision import datasets
+
+
+# 3rd-party utils
+from torch.utils.tensorboard import SummaryWriter
+
+# user-defined
+from datagen import jsonDataset
+import utils
+import net_factory
+from timer import Timer
+from cifar_split import CIFAR_split
+from temperature_scaling import ModelWithTemperature
+from ece_loss import ECELoss
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--config', type=str, required=True, help='path of config file')
+opt = parser.parse_args()
+
+config = utils.get_config(opt.config)
+
+'''set random seed'''
+random.seed(config['params']['seed'])
+np.random.seed(config['params']['seed'])
+torch.manual_seed(config['params']['seed'])
+os.environ["PYTHONHASHSEED"] = str(config['params']['seed'])
+
+'''cuda'''
+if torch.cuda.is_available() and not config['gpu']['used']:
+    print("WARNING: You have a CUDA device, so you should probably run with using cuda")
+
+if isinstance(config['gpu']['ind'], list):
+    cuda_str = 'cuda:' + str(config['gpu']['ind'][0])
+elif isinstance(config['gpu']['ind'], int):
+    cuda_str = 'cuda:' + str(config['gpu']['ind'])
+else:
+    raise ValueError('Check out gpu id in config')
+
+device = torch.device(cuda_str if config['gpu']['used'] else "cpu")
+
+'''Data'''
+print('==> Preparing data..')
+img_size = config['params']['image_size'].split('x')
+img_size = (int(img_size[0]), int(img_size[1]))
+
+if config['data']['name'] == 'cifar10' or config['data']['name'] == 'cifar100':
+    transform_test = transforms.Compose([
+        transforms.Resize(size=img_size),
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    ])
+else:
+    transform_test = transforms.Compose([
+        transforms.Resize(size=img_size),
+        transforms.ToTensor()
+    ])
+
+def collate_fn_test(batch):
+    imgs = [transform_test(x[0]) for x in batch]
+    targets = [x[1] for x in batch]
+
+    inputs = torch.stack(imgs)
+    targets = torch.tensor(targets)
+
+    return inputs, targets
+
+if config['data']['name'] == 'cifar100':
+    num_classes = 100 - config['params']['num_exclude_class']
+    train_dataset = CIFAR_split(dir_path='cifar-100-python', num_exclude=config['params']['num_exclude_class'],
+                                train=True, get_unknown=False)
+    test_dataset = CIFAR_split(dir_path='cifar-100-python', num_exclude=config['params']['num_exclude_class'],
+                               train=False, get_unknown=False)
+elif config['data']['name'] == 'cifar10':
+    num_classes = 10 - config['params']['num_exclude_class']
+    train_dataset = CIFAR_split(dir_path='cifar-10-batches-py', num_exclude=config['params']['num_exclude_class'],
+                                train=True, get_unknown=False)
+    test_dataset = CIFAR_split(dir_path='cifar-10-batches-py', num_exclude=config['params']['num_exclude_class'],
+                               train=False, get_unknown=False)
+else:
+    raise NotImplementedError('Unsupported Dataset: ' + str(config['data']['name']))
+
+assert train_dataset
+assert test_dataset
+
+train_loader = torch.utils.data.DataLoader(
+    train_dataset, batch_size=config['params']['batch_size'],
+    shuffle=False, num_workers=config['params']['workers'],
+    collate_fn=collate_fn_test,
+    pin_memory=True)
+test_loader = torch.utils.data.DataLoader(
+    test_dataset, batch_size=config['params']['batch_size'],
+    shuffle=False, num_workers=config['params']['workers'],
+    collate_fn=collate_fn_test,
+    pin_memory=True)
+
+data_loaders = {'train': train_loader, 'test': test_loader}
+
+''' ece criterion'''
+ece_criterion = ECELoss()
+
+'''print out'''
+print("num. train data : " + str(len(train_dataset)))
+print("num. test data : " + str(len(test_dataset)))
+print("num_classes : " + str(num_classes))
+
+utils.print_config(config)
+
+def view_inputs(x):
+    import cv2
+
+    x = x.detach().cpu().numpy()
+    batch = x.shape[0]
+
+    for iter_x in range(batch):
+        np_x = x[iter_x]
+        np_x = (np_x * 255.).astype(np.uint8)
+        img = np.transpose(np_x, (1, 2, 0))
+        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+
+        cv2.imshow('test', img)
+        cv2.waitKey(0)
+
+
+def draw_histogram(datalist, phase, dir_path=None):
+    if not isinstance(datalist, list):
+        raise TypeError()
+
+    data = np.array(datalist)
+    np.savetxt(fname=os.path.join(dir_path, str(phase) + '-confidences.txt'), X=data)
+
+    data_mean = data.mean()
+
+    ys, xs, patches = plt.hist(data, bins=10, range=(0.0, 1.0), density=False,
+                               color='b', edgecolor='black', rwidth=0.9,
+                               label=phase)
+
+    plt.xlabel('Probability')
+    plt.ylabel('Num. of samples')
+    title_str = f'mean of prob: {data_mean:.4f}'
+    plt.title(title_str)
+
+    if dir_path is not None:
+        plt.savefig(os.path.join(dir_path, str(phase) + '-known_classes.png'))
+    plt.show()
+
+    # sns.distplot(data, bins=10, kde=False, hist=True, norm_hist=True, label=phase)
+
+
+
+def do_test(phase, is_scaling=False):
+    ''' Model'''
+    net = net_factory.load_model(config=config, num_classes=num_classes)
+    net = net.to(device)
+    if is_scaling is True:
+        ckpt = torch.load(os.path.join(config['exp']['path'], 'model_with_temperature.pth'), map_location=device)
+        weights = utils._load_weights(ckpt)
+        net = ModelWithTemperature(net)
+        net = net.to(device)
+        missing_keys = net.load_state_dict(weights, strict=True)
+        print(missing_keys)
+    else:
+        ckpt = torch.load(os.path.join(config['exp']['path'], 'best.pth'), map_location=device)
+        weights = utils._load_weights(ckpt['net'])
+        missing_keys = net.load_state_dict(weights, strict=True)
+        print(missing_keys)
+
+    '''print out net'''
+    # print(net)
+    num_parameters = 0.
+    for param in net.parameters():
+        sizes = param.size()
+
+        num_layer_param = 1.
+        for size in sizes:
+            num_layer_param *= size
+        num_parameters += num_layer_param
+    print("num. of parameters : " + str(num_parameters))
+
+
+    ''' inference '''
+    net.eval()
+
+    logits_list = list()
+    targets_list = list()
+    with torch.set_grad_enabled(False):
+        for batch_idx, (inputs, targets) in enumerate(tqdm(data_loaders[phase])):
+            inputs = inputs.to(device)
+
+            # view_inputs(inputs)
+            logits = net(inputs)
+            logits_list.append(logits.detach().cpu())
+            targets_list.append(targets)
+
+    logits = torch.cat(logits_list)
+    targets = torch.cat(targets_list)
+    ece_loss = ece_criterion(logits, targets).item()
+
+    probs = logits.softmax(dim=1)
+    max_probs, max_ind = probs.max(dim=1)
+    all_correct = max_ind.eq(targets).float().sum().item()
+    accuracy = all_correct / probs.shape[0]
+
+    print('%-3s (accuracy) : %.5f' % (phase, accuracy))
+    print('%-3s (ece) : %.5f' % (phase, ece_loss))
+
+    draw_histogram(max_probs.tolist(), phase, config['exp']['path'])
+
+
+def apply_mc_dropout(m):
+    if type(m) == nn.Dropout:
+        m.train()
+
+
+def do_test_beyesian(phase):
+    num_infer = config['params']['num_infer']
+
+    ''' Model'''
+    net = net_factory.load_model(config=config, num_classes=num_classes, dropout=config['params']['dropout'])
+    net = net.to(device)
+    ckpt = torch.load(os.path.join(config['exp']['path'], 'best.pth'), map_location=device)
+    weights = utils._load_weights(ckpt['net'])
+    missing_keys = net.load_state_dict(weights, strict=True)
+    print(missing_keys)
+
+    '''print out net'''
+    num_parameters = 0.
+    for param in net.parameters():
+        sizes = param.size()
+
+        num_layer_param = 1.
+        for size in sizes:
+            num_layer_param *= size
+        num_parameters += num_layer_param
+    print("num. of parameters : " + str(num_parameters))
+
+    ''' inference '''
+    net.eval()
+    net.apply(apply_mc_dropout)
+
+    certainties = list()
+
+    probs_list = list()
+    targets_list = list()
+    with torch.set_grad_enabled(False):
+        for batch_idx, (inputs, targets) in enumerate(tqdm(data_loaders[phase])):
+            inputs = inputs.to(device)
+
+            all_probs = list()
+            for iter_t in range(num_infer):
+                # view_inputs(inputs)
+                logits = net(inputs)
+                probs = logits.softmax(dim=1)
+                all_probs.append(probs.detach().cpu())
+            all_probs = torch.stack(all_probs)
+            all_probs = all_probs.contiguous().permute(1, 2, 0)
+            var, mean = torch.var_mean(all_probs, dim=2, unbiased=True)
+
+            probs_list.append(mean)
+            targets_list.append(targets)
+
+    probs = torch.cat(probs_list)
+    targets = torch.cat(targets_list)
+    ece_loss = ece_criterion(probs, targets, is_logits=False).item()
+
+    max_probs, max_ind = probs.max(dim=1)
+    all_correct = max_ind.eq(targets).float().sum().item()
+    accuracy = all_correct / probs.shape[0]
+
+    print('%-3s (accuracy) : %.5f' % (phase, accuracy))
+    print('%-3s (ece) : %.5f' % (phase, ece_loss))
+
+    draw_histogram(max_probs.tolist(), phase, config['exp']['path'])
+
+
+def do_test_ensemble(phase):
+    num_ensemble = config['params']['num_ensembles']
+    nets = list()
+
+    for iter_idx in range(num_ensemble):
+        net = net_factory.load_model(config=config, num_classes=num_classes)
+        net = net.to(device)
+
+        weight_file = 'best_' + str(iter_idx) + '.pth'
+        ckpt = torch.load(os.path.join(config['exp']['path'], weight_file), map_location=device)
+        weights = utils._load_weights(ckpt['net'])
+        missing_keys = net.load_state_dict(weights, strict=True)
+        print(missing_keys)
+
+        net.eval()
+        nets.append(net)
+
+    probs_list = list()
+    targets_list = list()
+    with torch.set_grad_enabled(False):
+        # with autograd.detect_anomaly():
+        for batch_idx, (inputs, targets) in enumerate(tqdm(data_loaders[phase])):
+            inputs = inputs.to(device)
+
+            all_probs = list()
+            for net in nets:
+                # view_inputs(inputs)
+                logits = net(inputs)
+                probs = logits.softmax(dim=1)
+                all_probs.append(probs.detach().cpu())
+            all_probs = torch.stack(all_probs)
+            all_probs = all_probs.contiguous().permute(1, 2, 0)
+            var, mean = torch.var_mean(all_probs, dim=2, unbiased=True)
+
+            probs_list.append(mean)
+            targets_list.append(targets)
+
+    probs = torch.cat(probs_list)
+    targets = torch.cat(targets_list)
+    ece_loss = ece_criterion(probs, targets, is_logits=False).item()
+
+    max_probs, max_ind = probs.max(dim=1)
+    all_correct = max_ind.eq(targets).float().sum().item()
+    accuracy = all_correct / probs.shape[0]
+
+    print('%-3s (accuracy) : %.5f' % (phase, accuracy))
+    print('%-3s (ece) : %.5f' % (phase, ece_loss))
+
+    draw_histogram(max_probs.tolist(), phase, config['exp']['path'])
+
+
+if __name__ == '__main__':
+    is_bayesian = False
+    is_ensemble = False
+    is_scaling = False
+
+    if 'dropout' in config['params']:
+        is_bayesian = True
+    elif 'num_ensembles' in config['params']:
+        is_ensemble = True
+    elif 'temp_scaling' in opt.config:
+        is_scaling = True
+
+    print('is bayesian: ' + str(is_bayesian))
+    print('is ensemble: ' + str(is_ensemble))
+    print('is scaling: ' + str(is_scaling))
+
+    input("Press any key to continue..")
+
+    for phase in data_loaders:
+        if is_bayesian is True:
+            print('select bayesian model')
+            do_test_beyesian(phase)
+        elif is_ensemble is True:
+            print('select ensemble model')
+            do_test_ensemble(phase)
+        else:
+            if is_scaling is True:
+                print('select temp_scaling model')
+            else:
+                print('select base model')
+            do_test(phase, is_scaling)
+
+    # plt.xlabel('Probability')
+    # plt.ylabel('Num. of samples')
+    # plt.legend()
+    # plt.show()
+

@@ -12,7 +12,7 @@ def _read_confidences(phase, dir_path, dir_name):
     return np.loadtxt(os.path.join(dir_path, dir_name, str(phase) + '-confidences.txt'))
 
 if __name__ == '__main__':
-    phases = ['train', 'test', 'unknown']
+    phases = ['rotate90', 'rotate180']
 
     for phase in phases:
         base_conf = _read_confidences(phase, opt.dir, 'basenet')

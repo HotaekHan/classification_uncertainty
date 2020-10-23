@@ -9,7 +9,6 @@ import shutil
 import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
-from torchvision import datasets
 
 
 # 3rd-party utils
@@ -17,6 +16,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 # user-defined
 from datagen import jsonDataset
+from landmark_dataset import Landmark_dataset
 from optimizer import scheduled_optim
 import mixup
 import label_smoothing
@@ -97,7 +97,7 @@ def collate_fn_test(batch):
 if config['data']['name'] == 'cifar100':
     num_classes = 100 - config['params']['num_exclude_class']
     # train_data = datasets.CIFAR100(os.getcwd(), train=True, download=True, transform=None)
-    train_data = CIFAR_split(dir_path='cifar-100-python', num_exclude=config['params']['num_exclude_class'],
+    train_data = CIFAR_split(dir_path='cifar-100-python', num_include=num_classes,
                              train=True)
     num_train = len(train_data)
     num_valid = int(num_train * 0.2)
@@ -110,7 +110,7 @@ elif config['data']['name'] == 'cifar10':
     if config['params']['num_exclude_class'] > 8:
         raise ValueError('cifar10 has 10 classes. the number of exclude classes is over than num. of classes')
 
-    train_data = CIFAR_split(dir_path='cifar-10-batches-py', num_exclude=config['params']['num_exclude_class'],
+    train_data = CIFAR_split(dir_path='cifar-10-batches-py', num_include=num_classes,
                              train=True)
     num_train = len(train_data)
     num_valid = int(num_train * 0.2)
@@ -120,13 +120,20 @@ elif config['data']['name'] == 'cifar10':
 elif config['data']['name'] == 'its':
     target_classes = config['params']['classes'].split('|')
     num_classes = len(target_classes)
-    train_dataset = jsonDataset(path=config['data']['train'].split(' ')[0], classes=target_classes,
-                                transform=None,
-                                input_image_size=img_size)
+    train_dataset = jsonDataset(path=config['data']['train'].split(' ')[0], classes=target_classes)
 
-    valid_dataset = jsonDataset(path=config['data']['valid'].split(' ')[0], classes=target_classes,
-                                transform=None,
-                                input_image_size=img_size)
+    valid_dataset = jsonDataset(path=config['data']['valid'].split(' ')[0], classes=target_classes)
+elif config['data']['name'] == 'landmark':
+    train_data = Landmark_dataset(root='/data/kaggle/dacon_landmark_korea/public',
+                                  is_train=True)
+    num_classes = train_data.num_classes
+    num_data = len(train_data)
+    num_train = int(num_data * 0.7)
+    num_valid = num_data - num_train
+    train_dataset, valid_dataset = torch.utils.data.random_split(dataset=train_data,
+                                                                 lengths=[num_train, num_valid],
+                                                                 generator=torch.Generator().manual_seed(
+                                                                     config['params']['seed']))
 else:
     raise NotImplementedError('Unsupported Dataset: ' + str(config['data']['name']))
 

@@ -80,11 +80,11 @@ def collate_fn_test(batch):
 
 if config['data']['name'] == 'cifar100':
     num_classes = 100 - config['params']['num_exclude_class']
-    test_dataset = CIFAR_split(dir_path='cifar-100-python', num_exclude=config['params']['num_exclude_class'],
+    test_dataset = CIFAR_split(dir_path='cifar-100-python', num_include=num_classes,
                                train=False, get_unknown=False)
 elif config['data']['name'] == 'cifar10':
     num_classes = 10 - config['params']['num_exclude_class']
-    test_dataset = CIFAR_split(dir_path='cifar-10-batches-py', num_exclude=config['params']['num_exclude_class'],
+    test_dataset = CIFAR_split(dir_path='cifar-10-batches-py', num_include=num_classes,
                                train=False, get_unknown=False)
 else:
     raise NotImplementedError('Unsupported Dataset: ' + str(config['data']['name']))

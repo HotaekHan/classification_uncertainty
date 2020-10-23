@@ -78,16 +78,16 @@ def collate_fn_test(batch):
 
 if config['data']['name'] == 'cifar100':
     num_classes = 100 - config['params']['num_exclude_class']
-    train_dataset = CIFAR_split(dir_path='cifar-100-python', num_exclude=config['params']['num_exclude_class'],
+    train_dataset = CIFAR_split(dir_path='cifar-100-python', num_include=num_classes,
                                 train=True, get_unknown=True)
-    test_dataset = CIFAR_split(dir_path='cifar-100-python', num_exclude=config['params']['num_exclude_class'],
+    test_dataset = CIFAR_split(dir_path='cifar-100-python', num_include=num_classes,
                                train=False, get_unknown=True)
     all_dataset = torch.utils.data.ConcatDataset([train_dataset, test_dataset])
 elif config['data']['name'] == 'cifar10':
     num_classes = 10 - config['params']['num_exclude_class']
-    train_dataset = CIFAR_split(dir_path='cifar-10-batches-py', num_exclude=config['params']['num_exclude_class'],
+    train_dataset = CIFAR_split(dir_path='cifar-10-batches-py', num_include=num_classes,
                                 train=True, get_unknown=True)
-    test_dataset = CIFAR_split(dir_path='cifar-10-batches-py', num_exclude=config['params']['num_exclude_class'],
+    test_dataset = CIFAR_split(dir_path='cifar-10-batches-py', num_include=num_classes,
                                train=False, get_unknown=True)
     all_dataset = torch.utils.data.ConcatDataset([train_dataset, test_dataset])
 else:

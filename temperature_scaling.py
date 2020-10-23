@@ -151,7 +151,10 @@ if __name__ == '__main__':
     if config['data']['name'] == 'cifar100':
         num_classes = 100 - config['params']['num_exclude_class']
         # train_data = datasets.CIFAR100(os.getcwd(), train=True, download=True, transform=None)
-        train_data = CIFAR_split(dir_path='cifar-100-python', num_exclude=config['params']['num_exclude_class'],
+        if config['params']['num_exclude_class'] > 99:
+            raise ValueError('cifar100 has 100 classes. the number of exclude classes is over than num. of classes')
+
+        train_data = CIFAR_split(dir_path='cifar-100-python', num_include=num_classes,
                                  train=True)
         num_train = len(train_data)
         num_valid = int(num_train * 0.2)
@@ -161,10 +164,10 @@ if __name__ == '__main__':
     elif config['data']['name'] == 'cifar10':
         num_classes = 10 - config['params']['num_exclude_class']
         # train_data = datasets.CIFAR10(os.getcwd(), train=True, download=True, transform=None)
-        if config['params']['num_exclude_class'] > 8:
+        if config['params']['num_exclude_class'] > 9:
             raise ValueError('cifar10 has 10 classes. the number of exclude classes is over than num. of classes')
 
-        train_data = CIFAR_split(dir_path='cifar-10-batches-py', num_exclude=config['params']['num_exclude_class'],
+        train_data = CIFAR_split(dir_path='cifar-10-batches-py', num_include=num_classes,
                                  train=True)
         num_train = len(train_data)
         num_valid = int(num_train * 0.2)

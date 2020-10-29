@@ -305,7 +305,13 @@ def iterate(epoch, phase):
                                                          smoothing=0.0)
 
             # view_inputs(inputs)
-            logits = net(inputs)
+            if config['model']['type'] == 'arcface':
+                if is_train is True:
+                    logits = net(inputs, targets_a)
+                else:
+                    logits = net(inputs, targets)
+            else:
+                logits = net(inputs)
             outputs = logits.log_softmax(dim=1)
 
             if is_train is True:

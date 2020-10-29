@@ -1,4 +1,4 @@
-from models import ResNet, ResNetD, ShuffleNetV2, TResNet, Mobilenetv3, EfficientNet, RegNet, ResNest, ReXNet
+from models import ResNet, ResNetD, ShuffleNetV2, TResNet, Mobilenetv3, EfficientNet, RegNet, ResNest, ReXNet, Arcface
 
 
 def load_model(config, num_classes, dropout=None):
@@ -131,6 +131,7 @@ def load_model(config, num_classes, dropout=None):
         else:
             raise ValueError('Unsupported architecture: ' + str(config['model']['arch']))
     elif config['model']['type'] == 'assembled':
+        raise ValueError('Unsupported architecture: ' + str(config['model']['arch']))
         pass
     elif config['model']['type'] == 'shufflenet':
         if config['model']['arch'] == 'v2_x0_5':
@@ -163,6 +164,18 @@ def load_model(config, num_classes, dropout=None):
             net = ReXNet.rexnet(num_classes=num_classes, width_multi=2.0)
         else:
             raise ValueError('Unsupported architecture: ' + str(config['model']['arch']))
+    elif config['model']['type'] == 'arcface':
+        if config['model']['arch'] == 'arcface_resnet18':
+            net = Arcface.arcmargin_resnet18(pretrained=False, progress=False, num_classes=num_classes, dropout=dropout,
+                                             scale=64.0, margin=0.25)
+        elif config['model']['arch'] == 'arcface_resnet50':
+            net = Arcface.arcmargin_resnet50(pretrained=False, progress=False, num_classes=num_classes, dropout=dropout,
+                                             scale=64.0, margin=0.25)
+        elif config['model']['arch'] == 'arcface_resnext50':
+            net = Arcface.arcmargin_resnext50_32x4d(pretrained=False, progress=False, num_classes=num_classes, dropout=dropout,
+                                             scale=64.0, margin=0.25)
+        else:
+            raise ValueError('Unsupported architecture: ' + str(config['model']['arch']))
     else:
         raise ValueError('Unsupported architecture: ' + str(config['model']['type']))
 
@@ -172,10 +185,10 @@ if __name__ == '__main__':
     import torch
 
     config = {'model':
-                  {'type':'resnet',
-                   'arch':'resnet18'}}
+                  {'type':'arcface',
+                   'arch':'arcface_resnet18'}}
 
-    net = load_model(config, 100, dropout=[True, True, True, True, True])
+    net = load_model(config, 100, dropout=[False, False, False, False, False])
 
     num_parameters = 0.
     for param in net.parameters():
@@ -189,5 +202,5 @@ if __name__ == '__main__':
     print(net)
     print("num. of parameters : " + str(num_parameters))
 
-    out = net((torch.randn(10, 3, 32, 32)))
+    out = net(torch.randn(10, 3, 32, 32), torch.randn(10))
     print(out.size())

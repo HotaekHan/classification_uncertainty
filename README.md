@@ -26,6 +26,11 @@
 
 Experiments
 -----------------------------------
+* Split the half of classes as unknown data. and some portion of known data are test set.
+* Train with known data and get the quantitative results(accuracy, ece) from test set.
+* Get the qualitative result(confidences) from test set, rotated test set and unkwnon data.
+
+
 ### Cifar 100
 |Method|Accuracy(train)|Accuracy(test)|ECE|
 |------------|-----|-----|-----|

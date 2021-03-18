@@ -180,20 +180,15 @@ dataloaders = {'train': train_loader, 'valid': valid_loader}
 ''' Model'''
 if 'dropout' in config['params']:
     net = net_factory.load_model(config=config, num_classes=num_classes, dropout=config['params']['dropout'])
+elif 'num_eigens' in config['params']:
+    net = net_factory.load_model(config=config, num_classes=num_classes, num_eigens=config['params']['num_eigens'])
 else:
     net = net_factory.load_model(config=config, num_classes=num_classes, dropout=None)
 net = net.to(device)
 
 '''print out net'''
-num_parameters = 0.
-for param in net.parameters():
-    sizes = param.size()
-
-    num_layer_param = 1.
-    for size in sizes:
-        num_layer_param *= size
-    num_parameters += num_layer_param
 print(net)
+num_parameters = sum(p.numel() for p in net.parameters() if p.requires_grad)
 print("num. of parameters : " + str(num_parameters))
 
 '''set data parallel'''

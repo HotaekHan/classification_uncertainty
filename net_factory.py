@@ -1,12 +1,19 @@
-from models import ResNet, ResNetD, ShuffleNetV2, TResNet, Mobilenetv3, EfficientNet, RegNet, ResNest, ReXNet, Arcface
+from models import \
+    ResNet, ResNetD, ShuffleNetV2, TResNet, Mobilenetv3, EfficientNet, RegNet, ResNest, ReXNet, Arcface, PCANet
 
 
-def load_model(config, num_classes, dropout=None):
+def load_model(config, num_classes, dropout=None, num_eigens=None):
     if config['model']['type'] == 'resnet':
         if config['model']['arch'] == 'resnet18':
-            net = ResNet.resnet18(pretrained=False, progress=False, num_classes=num_classes, dropout=dropout)
+            if num_eigens is not None:
+                net = PCANet.resnet18(pretrained=False, progress=False, num_classes=num_classes, num_eigens=num_eigens)
+            else:
+                net = ResNet.resnet18(pretrained=False, progress=False, num_classes=num_classes, dropout=dropout)
         elif config['model']['arch'] == 'resnet50':
-            net = ResNet.resnet50(pretrained=False, progress=False, num_classes=num_classes, dropout=dropout)
+            if num_eigens is not None:
+                net = PCANet.resnet50(pretrained=False, progress=False, num_classes=num_classes, num_eigens=num_eigens)
+            else:
+                net = ResNet.resnet50(pretrained=False, progress=False, num_classes=num_classes, dropout=dropout)
         elif config['model']['arch'] == 'resnext50':
             net = ResNet.resnext50_32x4d(pretrained=False, progress=False, num_classes=num_classes, dropout=dropout)
         elif config['model']['arch'] == 'resnet50d':

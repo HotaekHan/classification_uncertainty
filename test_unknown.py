@@ -5,6 +5,7 @@ import random
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+import pickle as pk
 
 # pytorch
 import torch
@@ -195,6 +196,45 @@ def do_test(is_scaling=False):
     draw_histogram(certainties, config['exp']['path'])
 
 
+def do_test_pca():
+    ''' Model'''
+    net = net_factory.load_model(config=config, num_classes=num_classes, num_eigens=config['params']['num_eigens'])
+    net = net.to(device)
+    ckpt = torch.load(os.path.join(config['exp']['path'], 'best.pth'), map_location=device)
+    weights = utils._load_weights(ckpt['net'])
+    missing_keys = net.load_state_dict(weights, strict=True)
+    print(missing_keys)
+
+    '''print out net'''
+    # print(net)
+    num_parameters = sum(p.numel() for p in net.parameters() if p.requires_grad)
+    print(f'num. of parameters: {num_parameters}')
+
+    ''' find principle components'''
+    pca_path = os.path.join(config['exp']['path'], 'pca.pkl')
+    net.ipca = pk.load(open(pca_path, 'rb'))
+
+    ''' inference '''
+    net.eval()
+
+    uncertaintes = list()
+    with torch.set_grad_enabled(False):
+        for batch_idx, (inputs, targets) in enumerate(tqdm(data_loader)):
+            inputs = inputs.to(device)
+
+            # view_inputs(inputs)
+            logits, uncertainty = net(inputs, with_uncertainty=True)
+            uncertaintes.append(uncertainty)
+
+    uncertaintes_from_first = list()
+    for iter_value in uncertaintes:
+        all_eigens = np.concatenate(iter_value, axis=1)
+        uncertaintes_from_first.append(all_eigens.max(axis=1))
+
+    np_uncertaintes = np.concatenate(uncertaintes_from_first, axis=0)
+    draw_histogram(np_uncertaintes.tolist(), config['exp']['path'])
+
+
 def apply_mc_dropout(m):
     if type(m) == nn.Dropout:
         m.train()
@@ -296,6 +336,7 @@ if __name__ == '__main__':
     is_bayesian = False
     is_ensemble = False
     is_scaling = False
+    is_pca = False
 
     if 'dropout' in config['params']:
         is_bayesian = True
@@ -303,10 +344,13 @@ if __name__ == '__main__':
         is_ensemble = True
     elif 'temp_scaling' in opt.config:
         is_scaling = True
+    elif 'num_eigens' in config['params']:
+        is_pca = True
 
     print('is bayesian: ' + str(is_bayesian))
     print('is ensemble: ' + str(is_ensemble))
     print('is scaling: ' + str(is_scaling))
+    print('is pca: ' + str(is_pca))
 
     input("Press any key to continue..")
 
@@ -316,6 +360,8 @@ if __name__ == '__main__':
     elif is_ensemble is True:
         print('select ensemble model')
         do_test_ensemble()
+    elif is_pca is True:
+        do_test_pca()
     else:
         if is_scaling is True:
             print('select temp_scaling model')

@@ -5,6 +5,7 @@ import random
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+import pickle as pk
 
 # pytorch
 import torch
@@ -159,7 +160,6 @@ def draw_histogram(datalist, phase, dir_path=None):
     # sns.distplot(data, bins=10, kde=False, hist=True, norm_hist=True, label=phase)
 
 
-
 def do_test(phase, is_scaling=False):
     ''' Model'''
     net = net_factory.load_model(config=config, num_classes=num_classes)
@@ -217,6 +217,72 @@ def do_test(phase, is_scaling=False):
     print('%-3s (ece) : %.5f' % (phase, ece_loss))
 
     draw_histogram(max_probs.tolist(), phase, config['exp']['path'])
+
+
+def do_test_pca(phase):
+    ''' Model'''
+    net = net_factory.load_model(config=config, num_classes=num_classes, num_eigens=config['params']['num_eigens'])
+    net = net.to(device)
+    ckpt = torch.load(os.path.join(config['exp']['path'], 'best.pth'), map_location=device)
+    weights = utils._load_weights(ckpt['net'])
+    missing_keys = net.load_state_dict(weights, strict=True)
+    print(missing_keys)
+
+    '''print out net'''
+    # print(net)
+    num_parameters = sum(p.numel() for p in net.parameters() if p.requires_grad)
+    print(f'num. of parameters: {num_parameters}')
+
+    ''' find principle components'''
+    pca_path = os.path.join(config['exp']['path'], 'pca.pkl')
+    if not os.path.exists(pca_path):
+        with torch.set_grad_enabled(False):
+            for batch_idx, (inputs, targets) in enumerate(tqdm(data_loaders['train'])):
+                inputs = inputs.to(device)
+                targets = targets.to(device)
+
+                # view_inputs(inputs)
+                logits = net(inputs, update_pca=True)
+
+        pk.dump(net.ipca, open(pca_path, 'wb'))
+    else:
+        net.ipca = pk.load(open(pca_path, 'rb'))
+
+    ''' inference '''
+    net.eval()
+
+    logits_list = list()
+    targets_list = list()
+    uncertaintes = list()
+    with torch.set_grad_enabled(False):
+        for batch_idx, (inputs, targets) in enumerate(tqdm(data_loaders[phase])):
+            inputs = inputs.to(device)
+
+            # view_inputs(inputs)
+            logits, uncertainty = net(inputs, with_uncertainty=True)
+            logits_list.append(logits.detach().cpu())
+            targets_list.append(targets)
+            uncertaintes.append(uncertainty)
+
+    logits = torch.cat(logits_list)
+    targets = torch.cat(targets_list)
+    # ece_loss = ece_criterion(logits, targets).item()
+
+    probs = logits.softmax(dim=1)
+    max_probs, max_ind = probs.max(dim=1)
+    all_correct = max_ind.eq(targets).float().sum().item()
+    accuracy = all_correct / probs.shape[0]
+
+    print('%-3s (accuracy) : %.5f' % (phase, accuracy))
+    # print('%-3s (ece) : %.5f' % (phase, ece_loss))
+
+    uncertaintes_from_first = list()
+    for iter_value in uncertaintes:
+        all_eigens = np.concatenate(iter_value, axis=1)
+        uncertaintes_from_first.append(all_eigens.max(axis=1))
+
+    np_uncertaintes = np.concatenate(uncertaintes_from_first, axis=0)
+    draw_histogram(np_uncertaintes.tolist(), phase, config['exp']['path'])
 
 
 def apply_mc_dropout(m):
@@ -340,6 +406,7 @@ if __name__ == '__main__':
     is_bayesian = False
     is_ensemble = False
     is_scaling = False
+    is_pca = False
 
     if 'dropout' in config['params']:
         is_bayesian = True
@@ -347,10 +414,13 @@ if __name__ == '__main__':
         is_ensemble = True
     elif 'temp_scaling' in opt.config:
         is_scaling = True
+    elif 'num_eigens' in config['params']:
+        is_pca = True
 
     print('is bayesian: ' + str(is_bayesian))
     print('is ensemble: ' + str(is_ensemble))
     print('is scaling: ' + str(is_scaling))
+    print('is pca: ' + str(is_pca))
 
     input("Press any key to continue..")
 
@@ -361,6 +431,8 @@ if __name__ == '__main__':
         elif is_ensemble is True:
             print('select ensemble model')
             do_test_ensemble(phase)
+        elif is_pca is True:
+            do_test_pca(phase)
         else:
             if is_scaling is True:
                 print('select temp_scaling model')

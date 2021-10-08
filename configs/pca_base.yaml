@@ -1,0 +1,35 @@
+data:
+  name: cifar10
+optimizer:
+  lr: 0.4
+  momentum: 0.9
+  weight_decay: 1e-4
+  dampening: 0.0
+  nesterov: False
+  warmup_factor: 0.1
+  warmup_epoch: 5
+  exp_gamma: 0.1
+  lr_policy: cos
+  use_adam: False
+model:
+  type: resnet
+  arch: resnet18
+  pretrained: None
+  is_finetune: False
+params:
+  batch_size: 128
+  workers: 0
+  loss: CE
+  image_size: 32x32
+  seed: 1020
+  epoch: 300
+  mixup_alpha: 0.2
+  label_smoothing: 0.1
+  num_exclude_class: 5
+  num_eigens: 10
+gpu:
+  used: True
+  ind: 0
+exp:
+  path: /data/Expr/Projects/6_uncertainty/classification/ex2/pcanet
+  name: resnet18-cifar10-split5-pcanet
